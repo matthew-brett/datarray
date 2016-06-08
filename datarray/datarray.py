@@ -735,8 +735,10 @@ def _apply_reduction(opname, kwnames):
     runs_op.func_doc = super_op.__doc__
     return runs_op
 
+
 def is_numpy_scalar(arr):
     return arr.ndim == 0
+
 
 def _apply_accumulation(opname, kwnames):
     super_op = getattr(np.ndarray, opname)
@@ -763,7 +765,8 @@ def _apply_accumulation(opname, kwnames):
     runs_op.func_name = opname
     runs_op.func_doc = super_op.__doc__
     return runs_op
-            
+
+
 class DataArray(np.ndarray):
     # XXX- we need to figure out where in the numpy C code .T is defined!
     @property
@@ -784,7 +787,7 @@ class DataArray(np.ndarray):
 
         elif len(axes) > arr.ndim:
             raise NamedAxisError('Axes list should have length <= array ndim')
-        
+
         # Pad axes spec to match array shape
         axes = list(axes) + [None]*(arr.ndim - len(axes))
 
@@ -813,7 +816,7 @@ class DataArray(np.ndarray):
     def names (self):
         """Returns a tuple with all the axis names."""
         return tuple((ax.name for ax in self.axes))
-    
+
     def index_by(self, *args):
         return AxisIndexer(self, *args)
 
@@ -822,115 +825,158 @@ class DataArray(np.ndarray):
 
         Parameters
         ----------
-        self : ``DataArray``
-           Newly create instance of ``DataArray``
+        self : :class:`DataArray` instance
+           Newly created instance output from ufunc.
         obj : ndarray or None
-           any ndarray object (if view casting)
-           ``DataArray`` instance, if new-from-template
-           None if triggered from DataArray.__new__ call
+            Can be any ndarray object (if view casting); :class:`DataArray`
+            instance, if new-from-template; None if triggered from
+            ``DataArray.__new__`` call.
+
+        Returns
+        -------
+        None
+
+        Notes
+        -----
+        See http://docs.scipy.org/doc/numpy/user/basics.subclassing.html
         """
-        
-##         print "finalizing DataArray" # dbg
-        
-        # Ref: see http://docs.scipy.org/doc/numpy/user/basics.subclassing.html
-        
-        # provide info for what's happening
-##         print "finalize:\t%s\n\t\t%s" % (self.__class__, obj.__class__) # dbg
-##         print "obj     :", obj.shape  # dbg
-        # provide more info
+        print('finalize')
+        print('self', self.shape)
+        print('obj', obj.shape)
         if obj is None: # own constructor, we're done
             return
         if not hasattr(obj, 'axes'): # looks like view cast
             _set_axes(self, [])
             return
-        # new-from-template: we just copy the axes from the template,
-        # and hope the calling rountine knows what to do with the output
-##         print 'setting axes on self from obj' # dbg
+        # new-from-template: we just copy the axes from the template.
         _set_axes(self, obj.axes)
-            
         # validate the axes
         _validate_axes(self)
 
     def __array_prepare__(self, obj, context=None):
-        "Called at the beginning of each ufunc."
+        """" Check unfilled output array and arguments on way into ufunc
 
-##         print "preparing DataArray" # dbg
+        Called after the output arrays have been prepared, but before any
+        computation.
 
-        # Ref: see http://docs.scipy.org/doc/numpy/reference/arrays.classes.html
+        Check that the axes of `self` are compatible for broadcasting with the
+        axes of `obj`, otherwise, raise an error.
 
-        # provide info for what's happening
-        #print "prepare:\t%s\n\t\t%s" % (self.__class__, obj.__class__) # dbg
-        #print "obj     :", obj.shape  # dbg
-        #print "context :", context  # dbg
-        
-        if context is not None and len(context[1]) > 1:
-            "binary ufunc operation"
-            other = context[1][1]
-##             print "other   :", other.__class__
+        Parameters
+        ----------
+        self : :class:`DataArray` instance
+        obj : ndarray instance
+            Output array of correct shape, but before calculations of ufunc.
+        context : None or tuple length 3
+            Can be None if called directly, for example in linalg and kron
+            wrapper functions. Otherwise, a tuple of form (ufunc object,
+            arguments to the ufunc, domain).  Domain is an integer which
+            appears to be an index into a sequence of arrays.
 
-            if not isinstance(other,DataArray):
-                return obj
-            
-##                 print "found DataArray, comparing axes"
+        Returns
+        -------
+        ret_obj : ndarray instance
+            An ndarray instance of the same class as `obj`.
 
-            # walk back from the last axis on each array, check
-            # that the name and shape are acceptible for broadcasting
-            these_axes = list(self.axes)
-            those_axes = list(other.axes)
-            #print self.shape, self.names # dbg
-            while these_axes and those_axes:
-                that_ax = those_axes.pop(-1)
-                this_ax = these_axes.pop(-1)
-                # print self.shape # dbg
-                this_dim = self.shape[this_ax.index]
-                that_dim = other.shape[that_ax.index]
-                if that_ax.name != this_ax.name:
-                    # A valid name can be mis-matched IFF the other
-                    # (name, length) pair is:
-                    # * (None, 1)
-                    # * (None, {this,that}_dim).                    
-                    # In this case, the unnamed Axis should
-                    # adopt the name of the matching Axis in the
-                    # other array (handled in elsewhere)
-                    if that_ax.name is not None and this_ax.name is not None:
-                        raise NamedAxisError(
-                            'Axis axes are incompatible for '\
-                            'a binary operation: ' \
-                            '%s, %s'%(self.names, other.names))
-                if that_ax.labels != this_ax.labels:
-                    if that_ax.labels is not None and this_ax.labels is not None:
-                        raise NamedAxisError(
-                            'Axis labels are incompatible for '\
-                            'a binary operation.')
+        Notes
+        -----
+        numpy has to decide which ``__array_prepare__`` to call.
 
-                # XXX: Does this dimension compatibility check happen
-                #      before __array_prepare__ is even called? This
-                #      error is not fired when there's a shape mismatch.
-                if this_dim==1 or that_dim==1 or this_dim==that_dim:
-                    continue
-                raise NamedAxisError('Dimension with name %s has a '\
-                                     'mis-matched shape: ' \
-                                     '(%d, %d) '%(this_ax.name,
-                                                  this_dim,
-                                                  that_dim))
+        If an output argument is provided, then it is prepped with its own
+        __array_prepare__ not with the one determined by the input arguments.
+
+        If the provided output argument is already an ndarray, the prepping
+        function is None (which means no prepping will be done --- not even
+        PyArray_Return).
+
+        Otherwise numpy gets the prepare method from the input argument with
+        the highest priority.
+
+        See: http://docs.scipy.org/doc/numpy/reference/arrays.classes.html
+        """
+        print('prepare')
+        print('self', self)
+        print('obj', obj)
+        print('context', context)
+
+        if context is None or len(context[1]) <= 1:
+            return obj
+
+        # A binary ufunc operation
+        other = context[1][1]
+        if not isinstance(other, DataArray):
+            return obj
+
+        # Walk back from the last axis on each array, check that the name and
+        # shape are acceptible for broadcasting.
+        these_axes = list(self.axes)
+        those_axes = list(other.axes)
+        while these_axes and those_axes:
+            that_ax = those_axes.pop(-1)
+            this_ax = these_axes.pop(-1)
+            this_dim = self.shape[this_ax.index]
+            that_dim = other.shape[that_ax.index]
+            if that_ax.name != this_ax.name:
+                # A valid name can be mis-matched IFF the other
+                # (name, length) pair is:
+                # * (None, 1)
+                # * (None, {this,that}_dim)
+                # In this case, the unnamed Axis should adopt the name of the
+                # matching Axis in the other array (handled in elsewhere).
+                if that_ax.name is not None and this_ax.name is not None:
+                    raise NamedAxisError(
+                        'Axis axes are incompatible for a binary'
+                        'operation: {0}, {1}'.format(self.names, other.names))
+            if that_ax.labels != this_ax.labels:
+                if that_ax.labels is not None and this_ax.labels is not None:
+                    raise NamedAxisError(
+                        'Axis labels are incompatible for '
+                        'a binary operation.')
+
+            # XXX: Does this dimension compatibility check happen
+            #      before __array_prepare__ is even called? This
+            #      error is not fired when there's a shape mismatch.
+            if this_dim==1 or that_dim==1 or this_dim==that_dim:
+                continue
+            raise NamedAxisError('Dimension with name %s has a '
+                                 'mis-matched shape: ({0}, {1})'.format(
+                                     this_ax.name, this_dim, that_dim))
         return obj
-                    
 
     def __array_wrap__(self, obj, context=None):
+        """ Fix up output array after ufunc has finished
+
+        Parameters
+        ----------
+        self : :class:`DataArray` instance
+        obj : ndarray instance
+            Output array of ufunc
+        context : None or tuple length 3
+            Can be None if called directly, for example in linalg and kron
+            wrapper functions. Otherwise, a tuple of form (ufunc object,
+            arguments to the ufunc, domain).  Domain is an integer which
+            appears to be an index into a sequence of arrays.
+
+        Returns
+        -------
+        ret_obj : ndarray instance
+            An ndarray instance of the same class as `obj`.
+        """
         # provide info for what's happening
         # print "prepare:\t%s\n\t\t%s" % (self.__class__, obj.__class__) # dbg
         # print "obj     :", obj.shape  # dbg
         # print "context :", context # dbg
+        print('wrap')
+        print('self', self)
+        print('obj', obj)
+        print('context', context)
 
         other = None
         if context is not None and len(context[1]) > 1:
-            "binary ufunc operation"
+            # Binary ufunc operation
             other = context[1][1]
-##             print "other   :", other.__class__
-            
-        if isinstance(other,DataArray):            
-##                 print "found DataArray, comparing names"
 
+        if isinstance(other,DataArray):
             # walk back from the last axis on each array to get the
             # correct names/labels
             these_axes = list(self.axes)
@@ -940,8 +986,8 @@ class DataArray(np.ndarray):
                 this_ax = these_axes.pop(-1)
                 that_ax = those_axes.pop(-1)
                 # If we've broadcasted this array against another, then
-                # this_ax.name may be None, in which case the new array's
-                # Axis name should take on the value of that_ax
+                # this_ax.name may be None, in which case the new array's Axis
+                # name should take on the value of that_ax
                 if this_ax.name is None:
                     ax_spec.append(that_ax)
                 else:
@@ -962,7 +1008,7 @@ class DataArray(np.ndarray):
             new_axes.append( ax._copy(index=i, parent_arr=res) )
         _set_axes(res, new_axes)
         return res
-                
+
     def __getitem__(self, key):
         """Support x[k] access."""
         # Slicing keys:
@@ -971,7 +1017,7 @@ class DataArray(np.ndarray):
         # * a tuple with length <= self.ndim (may have newaxes)
         # * a tuple with length > self.ndim (MUST have newaxes)
         # * list, array, etc for fancy indexing (not implemented)
-        
+
         # Cases
         if isinstance(key, list) or isinstance(key, np.ndarray):
             # fancy indexing

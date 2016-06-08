@@ -498,3 +498,11 @@ class TestAxesManager:
         # What if axes differ by labels only?
         D = DataArray(np.random.randn(200, 4, 10), axes=('date', 'stocks', 'metric')) 
         nt.assert_false(self.A.axes == D.axes)
+
+
+def test_array_prepare():
+    # Test that array_prepare returns ordinary array when called directly
+    da = DataArray(np.random.randn(10, 10), 'ij')
+    dai = np.linalg.inv(da)
+    nt.assert_false(hasattr(dai, 'axes'))
+    npt.assert_array_equal(dai, np.linalg.inv(np.array(da)))
